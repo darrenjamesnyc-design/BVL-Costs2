@@ -1,6 +1,7 @@
 "use client"
 
 import { useState, useEffect } from "react"
+import { supabase } from "@/lib/supabase" 
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Calendar, DollarSign, Briefcase, Users, Download, FileText } from "lucide-react"
@@ -68,42 +69,59 @@ export function EmployeeDetailClient({ employeeId }: EmployeeDetailClientProps) 
   }, [employeeId])
 
   useEffect(() => {
-    const calculateWeeklySummaries = (): WeeklySummary[] => {
-      const summaries: WeeklySummary[] = []
-      const weekMap = new Map<string, WeeklySummary>()
-
-      timeEntries.forEach((entry) => {
-        const entryDate = new Date(entry.date)
-        const weekStart = getWeekStart(entryDate)
-        const weekEnd = new Date(weekStart)
-        weekEnd.setDate(weekEnd.getDate() + 6)
-
-        const weekKey = weekStart.toISOString().split("T")[0]
-
-        if (!weekMap.has(weekKey)) {
-          weekMap.set(weekKey, {
-            weekStart: weekKey,
-            weekEnd: weekEnd.toISOString().split("T")[0],
-            totalHours: 0,
-            totalCost: 0,
-            entries: 0,
-          })
-        }
-
-        const summary = weekMap.get(weekKey)!
-        summary.totalHours += entry.hours
-        summary.totalCost += entry.hours * employee?.hourlyRate || 0
-        summary.entries += 1
+const calculateWeeklySummaries = (): WeeklySummary[] => {
+  const summaries: WeeklySummary[] = []
+  const weekMap = new Map<string, WeeklySummary>()
+  timeEntries.forEach(entry => {
+    const weekStart = startOfWeek(entry.date)
+    const key = weekStart.toISOString()
+    if (!weekMap.has(key)) {
+      weekMap.set(key, {
+        weekStart: weekStart.toISOString().slice(0, 10),
+        weekEnd: endOfWeek(entry.date).toISOString().slice(0, 10),
+        totalHours: 0,
+        totalCost: 0,
+        entries: 0
       })
-
-      summaries.push(...Array.from(weekMap.values()))
-      summaries.sort((a, b) => new Date(b.weekStart).getTime() - new Date(a.weekStart).getTime())
-
-      return summaries
     }
+    const ws = weekMap.get(key)!
+    ws.totalHours += entry.hours
+    ws.totalCost += entry.hours * entry.rate
+    ws.entries += 1
+  })
+  return Array.from(weekMap.values())
+}
+  const summaries = calculateWeeklySummaries()
 
-    setWeeklySummaries(calculateWeeklySummaries())
-  }, [timeEntries, employee])
+  summaries.forEach(s =>
+    supabase.from('weekly_summaries').upsert({
+      week_start: s.weekStart,
+      week_end:   s.weekEnd,
+      total_hours: s.totalHours,
+      total_cost:  s.totalCost,
+      entries:     s.entries,
+      employee_id: employeeId
+    })
+  )
+
+  const readAndSubscribe = () => {
+    supabase.from('weekly_summaries')
+      .select('*')
+      .eq('employee_id', employeeId)
+      .order('week_start', { ascending: false })
+      .then(({ data }) => setSummaries(data ?? []))
+
+    const sub = supabase
+      .channel('summaries')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'weekly_summaries' }, payload => {
+      })
+      .subscribe()
+
+    return () => supabase.removeChannel(sub)
+  }
+
+  readAndSubscribe()
+}, [timeEntries, employeeId])
 
   useEffect(() => {
     if (weeklySummaries.length > 0 && !selectedWeek) {
