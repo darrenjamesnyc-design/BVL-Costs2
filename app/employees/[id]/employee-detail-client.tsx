@@ -60,46 +60,45 @@ export function EmployeeDetailClient({ employeeId }: EmployeeDetailClientProps) 
 
   /* ----------  CALCULATE → UPSERT → SUBSCRIBE  ---------- */
   useEffect(() => {
-    const calculateWeeklySummaries = (): WeeklySummary[] => {
-      const map = new Map<string, WeeklySummary>()
-      timeEntries.forEach((entry) => {
-        const start = startOfWeek(new Date(entry.date))
-        const key = start.toISOString()
-        if (!map.has(key)) {
-          map.set(key, {
-            weekStart: start.toISOString().slice(0, 10),
-            weekEnd: endOfWeek(new Date(entry.date)).toISOString().slice(0, 10),
-            totalHours: 0,
-            totalCost: 0,
-            entries: 0,
-          })
-        }
-        const ws = map.get(key)!
-        ws.totalHours += entry.hours
-        ws.totalCost += entry.hours * entry.rate
-        ws.entries += 1
-      })
-      return Array.from(map.values())
-    }
-
-    const summaries = calculateWeeklySummaries()
-
-    /* 1.  UPSERT (with log so you see it work) */
-    summaries.forEach((s) =>
-      supabase
-        .from("weekly_summaries")
-        .upsert({
-          week_start: s.weekStart,
-          week_end: s.weekEnd,
-          total_hours: s.totalHours,
-          total_cost: s.totalCost,
-          entries: s.entries,
-          employee_id: employeeId,
+  const calculateWeeklySummaries = (): WeeklySummary[] => {
+    const map = new Map<string, WeeklySummary>()
+    timeEntries.forEach((entry) => {
+      const start = startOfWeek(new Date(entry.date))
+      const key = start.toISOString()
+      if (!map.has(key)) {
+        map.set(key, {
+          weekStart: start.toISOString().slice(0, 10),
+          weekEnd: endOfWeek(new Date(entry.date)).toISOString().slice(0, 10),
+          totalHours: 0,
+          totalCost: 0,
+          entries: 0,
         })
-        .then((res) => console.log("upsert result", res))
-        .catch((err) => console.error("upsert failed", err))
-    )
+      }
+      const ws = map.get(key)!
+      ws.totalHours += entry.hours
+      ws.totalCost += entry.hours * (entry.rate ?? 0) // ensure rate is numeric
+      ws.entries += 1
+    })
+    return Array.from(map.values())
+  }
 
+  const summaries = calculateWeeklySummaries()
+
+  /* 1.  UPSERT (null-safe) */
+  summaries.forEach((s) =>
+    supabase
+      .from('weekly_summaries')
+      .upsert({
+        week_start: s.weekStart,
+        week_end: s.weekEnd,
+        total_hours: s.totalHours,
+        total_cost: s.totalCost ?? 0, // NEVER null
+        entries: s.entries,
+        employee_id: employeeId,
+      })
+      .then((res) => console.log('upsert result', res))
+      .catch((err) => console.error('upsert failed', err))
+  )
     /* 2.  READ + LIVE SUBSCRIBE */
     const readAndSubscribe = () => {
       supabase
