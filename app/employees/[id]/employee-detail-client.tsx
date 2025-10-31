@@ -1,7 +1,7 @@
 "use client"
 
 import { useState, useEffect } from "react"
-import { supabase } from "@/lib/supabase" 
+import { supabase } from "@/lib/supabase"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Calendar, DollarSign, Briefcase, Users, Download, FileText } from "lucide-react"
@@ -11,9 +11,8 @@ import { formatDate } from "@/lib/utils"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { startOfWeek, endOfWeek } from "date-fns"
 
-type EmployeeDetailClientProps = {
-  employeeId: string
-}
+/* ----------  TYPES  ---------- */
+type EmployeeDetailClientProps = { employeeId: string }
 
 type WeeklySummary = {
   weekStart: string
@@ -23,13 +22,7 @@ type WeeklySummary = {
   entries: number
 }
 
-type DailyEntry = {
-  date: string
-  projectName: string
-  hours: number
-  cost: number
-}
-
+type DailyEntry = { date: string; projectName: string; hours: number; cost: number }
 type WeeklyTimesheet = {
   weekStart: string
   weekEnd: string
@@ -38,6 +31,7 @@ type WeeklyTimesheet = {
   totalCost: number
 }
 
+/* ----------  COMPONENT  ---------- */
 export function EmployeeDetailClient({ employeeId }: EmployeeDetailClientProps) {
   const [employee, setEmployee] = useState<Employee | null>(null)
   const [timeEntries, setTimeEntries] = useState<TimeEntry[]>([])
@@ -46,96 +40,106 @@ export function EmployeeDetailClient({ employeeId }: EmployeeDetailClientProps) 
   const [selectedWeek, setSelectedWeek] = useState<string>("")
   const [weeklySummaries, setWeeklySummaries] = useState<WeeklySummary[]>([])
 
+  /* ----------  LOCAL STORAGE HYDRATION  ---------- */
   useEffect(() => {
     const storedEmployees = localStorage.getItem("employees")
     const storedTimeEntries = localStorage.getItem("timeEntries")
     const storedProjects = localStorage.getItem("projects")
 
     if (storedEmployees) {
-      const employeesList = JSON.parse(storedEmployees)
-      setEmployees(employeesList)
-      const foundEmployee = employeesList.find((e: Employee) => e.id === employeeId)
-      setEmployee(foundEmployee || null)
+      const list: Employee[] = JSON.parse(storedEmployees)
+      setEmployees(list)
+      setEmployee(list.find((e) => e.id === employeeId) ?? null)
     }
-
     if (storedTimeEntries) {
-      const entriesList = JSON.parse(storedTimeEntries)
-      const employeeEntries = entriesList.filter((e: TimeEntry) => e.employeeId === employeeId)
-      setTimeEntries(employeeEntries)
+      const list: TimeEntry[] = JSON.parse(storedTimeEntries)
+      setTimeEntries(list.filter((e) => e.employeeId === employeeId))
     }
-
-    if (storedProjects) {
-      setProjects(JSON.parse(storedProjects))
-    }
+    if (storedProjects) setProjects(JSON.parse(storedProjects))
   }, [employeeId])
 
+  /* ----------  CALCULATE → UPSERT → SUBSCRIBE  ---------- */
   useEffect(() => {
-const calculateWeeklySummaries = (): WeeklySummary[] => {
-  const weeklySummaries: WeeklySummary[] = []
-  const weekMap = new Map<string, WeeklySummary>()
-  timeEntries.forEach(entry => {
-    const weekStart = startOfWeek(entry.date)
-    const key = weekStart.toISOString()
-    if (!weekMap.has(key)) {
-      weekMap.set(key, {
-        weekStart: weekStart.toISOString().slice(0, 10),
-        weekEnd: endOfWeek(entry.date).toISOString().slice(0, 10),
-        totalHours: 0,
-        totalCost: 0,
-        entries: 0
+    const calculateWeeklySummaries = (): WeeklySummary[] => {
+      const map = new Map<string, WeeklySummary>()
+      timeEntries.forEach((entry) => {
+        const start = startOfWeek(new Date(entry.date))
+        const key = start.toISOString()
+        if (!map.has(key)) {
+          map.set(key, {
+            weekStart: start.toISOString().slice(0, 10),
+            weekEnd: endOfWeek(new Date(entry.date)).toISOString().slice(0, 10),
+            totalHours: 0,
+            totalCost: 0,
+            entries: 0,
+          })
+        }
+        const ws = map.get(key)!
+        ws.totalHours += entry.hours
+        ws.totalCost += entry.hours * entry.rate
+        ws.entries += 1
       })
+      return Array.from(map.values())
     }
-    const ws = weekMap.get(key)!
-    ws.totalHours += entry.hours
-    ws.totalCost += entry.hours * entry.rate
-    ws.entries += 1
-  })
-  return Array.from(weekMap.values())
-}
-  const summaries = calculateWeeklySummaries()
 
-  weeklySummaries.forEach(s =>
-    supabase.from('weekly_summaries').upsert({
-      week_start: s.weekStart,
-      week_end:   s.weekEnd,
-      total_hours: s.totalHours,
-      total_cost:  s.totalCost,
-      entries:     s.entries,
-      employee_id: employeeId
-    })
-  )
+    const summaries = calculateWeeklySummaries()
 
-  const readAndSubscribe = () => {
-    supabase.from('weekly_summaries')
-      .select('*')
-      .eq('employee_id', employeeId)
-      .order('week_start', { ascending: false })
-      .then(({ data }) => setWeeklySummaries(data ?? []))
+    /* 1.  UPSERT (with log so you see it work) */
+    summaries.forEach((s) =>
+      supabase
+        .from("weekly_summaries")
+        .upsert({
+          week_start: s.weekStart,
+          week_end: s.weekEnd,
+          total_hours: s.totalHours,
+          total_cost: s.totalCost,
+          entries: s.entries,
+          employee_id: employeeId,
+        })
+        .then((res) => console.log("upsert result", res))
+        .catch((err) => console.error("upsert failed", err))
+    )
 
-    const sub = supabase
-      .channel('summaries')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'weekly_summaries' }, payload => {
-  if (payload.eventType === 'INSERT')
-    setWeeklySummaries(prev => [payload.new as WeeklySummary, ...prev])
-  if (payload.eventType === 'DELETE')
-    setWeeklySummaries(prev => prev.filter(r => r.id !== payload.old.id))
-  if (payload.eventType === 'UPDATE')
-    setWeeklySummaries(prev => prev.map(r => r.id === payload.new.id ? payload.new as WeeklySummary : r))
-})
-      .subscribe()
+    /* 2.  READ + LIVE SUBSCRIBE */
+    const readAndSubscribe = () => {
+      supabase
+        .from("weekly_summaries")
+        .select("*")
+        .eq("employee_id", employeeId)
+        .order("week_start", { ascending: false })
+        .then(({ data }) => setWeeklySummaries(data ?? []))
 
-    return () => supabase.removeChannel(sub)
-  }
+      const sub = supabase
+        .channel(`summaries-${employeeId}`)
+        .on(
+          "postgres_changes",
+          { event: "*", schema: "public", table: "weekly_summaries" },
+          (payload) => {
+            console.log("real-time payload", payload) // helps while testing
+            if (payload.eventType === "INSERT")
+              setWeeklySummaries((prev) => [payload.new as WeeklySummary, ...prev])
+            if (payload.eventType === "DELETE")
+              setWeeklySummaries((prev) => prev.filter((r) => r.id !== payload.old.id))
+            if (payload.eventType === "UPDATE")
+              setWeeklySummaries((prev) =>
+                prev.map((r) => (r.id === payload.new.id ? (payload.new as WeeklySummary) : r))
+              )
+          }
+        )
+        .subscribe()
 
-  readAndSubscribe()
-}, [timeEntries, employeeId])
+      return () => supabase.removeChannel(sub)
+    }
 
+    readAndSubscribe()
+  }, [timeEntries, employeeId])
+
+  /* ----------  SELECT FIRST WEEK AUTOMATICALLY  ---------- */
   useEffect(() => {
-    if (weeklySummaries.length > 0 && !selectedWeek) {
-      setSelectedWeek(weeklySummaries[0].weekStart)
-    }
+    if (weeklySummaries.length && !selectedWeek) setSelectedWeek(weeklySummaries[0].weekStart)
   }, [weeklySummaries, selectedWeek])
 
+  /* ----------  RENDER HELPERS  ---------- */
   if (!employee) {
     return (
       <div className="min-h-screen bg-background">
@@ -148,7 +152,6 @@ const calculateWeeklySummaries = (): WeeklySummary[] => {
 
   const totalCost = timeEntries.reduce((sum, entry) => sum + entry.hours * employee.hourlyRate, 0)
   const totalHours = timeEntries.reduce((sum, entry) => sum + entry.hours, 0)
-
   const employeeProjects = projects.filter((project) => timeEntries.some((entry) => entry.projectId === project.id))
 
   const getWeekStart = (date: Date) => {
@@ -159,54 +162,46 @@ const calculateWeeklySummaries = (): WeeklySummary[] => {
   }
 
   const createWeeklyTimesheets = (): WeeklyTimesheet[] => {
-    const timesheets: WeeklyTimesheet[] = []
-    const weekMap = new Map<string, WeeklyTimesheet>()
-
+    const map = new Map<string, WeeklyTimesheet>()
     timeEntries.forEach((entry) => {
       const entryDate = new Date(entry.date)
       const weekStart = getWeekStart(entryDate)
       const weekEnd = new Date(weekStart)
       weekEnd.setDate(weekEnd.getDate() + 6)
+      const key = weekStart.toISOString().split("T")[0]
 
-      const weekKey = weekStart.toISOString().split("T")[0]
-
-      if (!weekMap.has(weekKey)) {
-        weekMap.set(weekKey, {
-          weekStart: weekKey,
+      if (!map.has(key)) {
+        map.set(key, {
+          weekStart: key,
           weekEnd: weekEnd.toISOString().split("T")[0],
           dailyEntries: [],
           totalHours: 0,
           totalCost: 0,
         })
       }
-
-      const timesheet = weekMap.get(weekKey)!
-      const project = projects.find((p) => p.id === entry.projectId)
+      const timesheet = map.get(key)!
+      const project = projects.find((p) => p.id === entry.projectId) as Project | undefined
       const cost = entry.hours * employee.hourlyRate
 
       timesheet.dailyEntries.push({
         date: entry.date,
-        projectName: project?.name || "Unknown Project",
+        projectName: project?.name ?? "Unknown Project",
         hours: entry.hours,
-        cost: cost,
+        cost,
       })
-
       timesheet.totalHours += entry.hours
       timesheet.totalCost += cost
     })
 
-    timesheets.push(...Array.from(weekMap.values()))
-    timesheets.sort((a, b) => new Date(b.weekStart).getTime() - new Date(a.weekStart).getTime())
-
-    timesheets.forEach((timesheet) => {
-      timesheet.dailyEntries.sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime())
-    })
-
-    return timesheets
+    const sheets = Array.from(map.values())
+    sheets.sort((a, b) => new Date(b.weekStart).getTime() - new Date(a.weekStart).getTime())
+    sheets.forEach((t) => t.dailyEntries.sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime()))
+    return sheets
   }
 
   const weeklyTimesheets = createWeeklyTimesheets()
 
+  /* ----------  EXPORT HELPERS  ---------- */
   const exportToExcel = (timesheet: WeeklyTimesheet) => {
     import("xlsx").then((XLSX) => {
       const data = [
@@ -220,28 +215,15 @@ const calculateWeeklySummaries = (): WeeklySummary[] => {
         ["Week:", `${formatDate(timesheet.weekStart)} - ${formatDate(timesheet.weekEnd)}`],
         [""],
         ["Date", "Project", "Hours", "Cost"],
-        ...timesheet.dailyEntries.map((entry) => [
-          formatDate(entry.date),
-          entry.projectName,
-          entry.hours,
-          `€${entry.cost.toFixed(2)}`,
-        ]),
+        ...timesheet.dailyEntries.map((e) => [formatDate(e.date), e.projectName, e.hours, `€${e.cost.toFixed(2)}`]),
         [""],
         ["Total", "", timesheet.totalHours, `€${timesheet.totalCost.toFixed(2)}`],
       ]
 
       const ws = XLSX.utils.aoa_to_sheet(data)
-
-      // Style the header with brand colors
-      ws["A1"] = { v: "BRACKVALE", t: "s", s: { font: { bold: true, sz: 16, color: { rgb: "1A3A52" } } } }
-      ws["A2"] = { v: "Employee Timesheet", t: "s", s: { font: { bold: true, sz: 14, color: { rgb: "6BC4C9" } } } }
-
-      // Set column widths
       ws["!cols"] = [{ wch: 20 }, { wch: 30 }, { wch: 10 }, { wch: 12 }]
-
       const wb = XLSX.utils.book_new()
       XLSX.utils.book_append_sheet(wb, ws, "Timesheet")
-
       XLSX.writeFile(wb, `${employee.name}_Timesheet_${timesheet.weekStart}.xlsx`)
     })
   }
@@ -253,114 +235,34 @@ const calculateWeeklySummaries = (): WeeklySummary[] => {
         const autoTable = autoTableModule.default
         const doc = new jsPDF()
 
-        // Add logo
-        const logoUrl =
-          "https://hebbkx1anhila5yf.public.blob.vercel-storage.com/Brackvale%20Logo%20No%20BG-FAwL6vdPUgBrDx7fzBM2pqp6clQGrp.png"
-        const img = new Image()
-        img.crossOrigin = "anonymous"
-        img.src = logoUrl
+        const navyBlue = [26, 58, 82]
+        const teal = [107, 196, 201]
 
-        img.onload = () => {
-          // Add logo at top right
-          doc.addImage(img, "PNG", 150, 10, 40, 30)
+        doc.setTextColor(navyBlue[0], navyBlue[1], navyBlue[2])
+        doc.setFontSize(20)
+        doc.setFont(undefined, "bold")
+        doc.text("Employee Timesheet", 14, 25)
+        doc.setFontSize(11)
+        doc.setFont(undefined, "normal")
+        doc.setTextColor(0, 0, 0)
+        doc.text(`Employee: ${employee.name}`, 14, 45)
+        doc.text(`Role: ${employee.role}`, 14, 52)
+        doc.text(`Local Rate: €${employee.hourlyRate} | Dublin Rate: €${employee.dublinRate}`, 14, 59)
+        doc.text(`Week: ${formatDate(timesheet.weekStart)} - ${formatDate(timesheet.weekEnd)}`, 14, 66)
 
-          // Brand colors
-          const navyBlue = [26, 58, 82]
-          const teal = [107, 196, 201]
+        const body = timesheet.dailyEntries.map((e) => [formatDate(e.date), e.projectName, e.hours.toFixed(1), `€${e.cost.toFixed(2)}`])
+        body.push(["Total", "", timesheet.totalHours.toFixed(1), `€${timesheet.totalCost.toFixed(2)}`])
 
-          // Title with brand color
-          doc.setTextColor(navyBlue[0], navyBlue[1], navyBlue[2])
-          doc.setFontSize(20)
-          doc.setFont(undefined, "bold")
-          doc.text("Employee Timesheet", 14, 25)
+        autoTable(doc, {
+          startY: 75,
+          head: [["Date", "Project", "Hours", "Cost"]],
+          body,
+          theme: "grid",
+          headStyles: { fillColor: navyBlue, textColor: [255, 255, 255], fontStyle: "bold" },
+          footStyles: { fillColor: teal, textColor: [255, 255, 255], fontStyle: "bold" },
+        })
 
-          // Employee details with teal accent
-          doc.setFontSize(11)
-          doc.setFont(undefined, "normal")
-          doc.setTextColor(0, 0, 0)
-          doc.text(`Employee: ${employee.name}`, 14, 45)
-          doc.text(`Role: ${employee.role}`, 14, 52)
-          doc.text(`Local Rate: €${employee.hourlyRate} | Dublin Rate: €${employee.dublinRate}`, 14, 59)
-          doc.text(`Week: ${formatDate(timesheet.weekStart)} - ${formatDate(timesheet.weekEnd)}`, 14, 66)
-
-          const tableData = timesheet.dailyEntries.map((entry) => [
-            formatDate(entry.date),
-            entry.projectName,
-            entry.hours.toFixed(1),
-            `€${entry.cost.toFixed(2)}`,
-          ])
-
-          tableData.push(["Total", "", timesheet.totalHours.toFixed(1), `€${timesheet.totalCost.toFixed(2)}`])
-
-          autoTable(doc, {
-            startY: 75,
-            head: [["Date", "Project", "Hours", "Cost"]],
-            body: tableData,
-            theme: "grid",
-            headStyles: {
-              fillColor: navyBlue,
-              textColor: [255, 255, 255],
-              fontStyle: "bold",
-            },
-            footStyles: {
-              fillColor: teal,
-              textColor: [255, 255, 255],
-              fontStyle: "bold",
-            },
-          })
-
-          doc.save(`${employee.name}_Timesheet_${timesheet.weekStart}.pdf`)
-        }
-
-        img.onerror = () => {
-          // Fallback if logo fails to load
-          console.error("[v0] Failed to load logo, generating PDF without it")
-
-          const navyBlue = [26, 58, 82]
-          const teal = [107, 196, 201]
-
-          doc.setTextColor(navyBlue[0], navyBlue[1], navyBlue[2])
-          doc.setFontSize(20)
-          doc.setFont(undefined, "bold")
-          doc.text("BRACKVALE", 14, 15)
-          doc.text("Employee Timesheet", 14, 25)
-
-          doc.setFontSize(11)
-          doc.setFont(undefined, "normal")
-          doc.setTextColor(0, 0, 0)
-          doc.text(`Employee: ${employee.name}`, 14, 45)
-          doc.text(`Role: ${employee.role}`, 14, 52)
-          doc.text(`Local Rate: €${employee.hourlyRate} | Dublin Rate: €${employee.dublinRate}`, 14, 59)
-          doc.text(`Week: ${formatDate(timesheet.weekStart)} - ${formatDate(timesheet.weekEnd)}`, 14, 66)
-
-          const tableData = timesheet.dailyEntries.map((entry) => [
-            formatDate(entry.date),
-            entry.projectName,
-            entry.hours.toFixed(1),
-            `€${entry.cost.toFixed(2)}`,
-          ])
-
-          tableData.push(["Total", "", timesheet.totalHours.toFixed(1), `€${timesheet.totalCost.toFixed(2)}`])
-
-          autoTable(doc, {
-            startY: 75,
-            head: [["Date", "Project", "Hours", "Cost"]],
-            body: tableData,
-            theme: "grid",
-            headStyles: {
-              fillColor: navyBlue,
-              textColor: [255, 255, 255],
-              fontStyle: "bold",
-            },
-            footStyles: {
-              fillColor: teal,
-              textColor: [255, 255, 255],
-              fontStyle: "bold",
-            },
-          })
-
-          doc.save(`${employee.name}_Timesheet_${timesheet.weekStart}.pdf`)
-        }
+        doc.save(`${employee.name}_Timesheet_${timesheet.weekStart}.pdf`)
       })
     })
   }
@@ -369,179 +271,72 @@ const calculateWeeklySummaries = (): WeeklySummary[] => {
     import("jspdf").then((jsPDFModule) => {
       const jsPDF = jsPDFModule.default
       const doc = new jsPDF()
+      const navyBlue = [26, 58, 82]
+      const teal = [107, 196, 201]
+      const gold = [253, 185, 19]
 
-      // Add logo
-      const logoUrl =
-        "https://hebbkx1anhila5yf.public.blob.vercel-storage.com/Brackvale%20Logo%20No%20BG-FAwL6vdPUgBrDx7fzBM2pqp6clQGrp.png"
-      const img = new Image()
-      img.crossOrigin = "anonymous"
-      img.src = logoUrl
+      doc.setTextColor(navyBlue[0], navyBlue[1], navyBlue[2])
+      doc.setFontSize(24)
+      doc.setFont(undefined, "bold")
+      doc.text("PAYSLIP", 105, 55, { align: "center" })
 
-      img.onload = () => {
-        // Add logo at top
-        doc.addImage(img, "PNG", 80, 10, 50, 35)
+      doc.setFillColor(teal[0], teal[1], teal[2])
+      doc.rect(14, 65, 182, 8, "F")
+      doc.setTextColor(255, 255, 255)
+      doc.setFontSize(12)
+      doc.text("Employee Information", 16, 71)
 
-        // Brand colors
-        const navyBlue = [26, 58, 82]
-        const teal = [107, 196, 201]
-        const gold = [253, 185, 19]
+      doc.setTextColor(0, 0, 0)
+      doc.setFontSize(10)
+      doc.setFont(undefined, "normal")
+      doc.text(`Name: ${employee.name}`, 16, 82)
+      doc.text(`Role: ${employee.role}`, 16, 89)
+      doc.text(`Local Rate: €${employee.hourlyRate}/hr | Dublin Rate: €${employee.dublinRate}/hr`, 16, 96)
 
-        // Title with brand color
-        doc.setTextColor(navyBlue[0], navyBlue[1], navyBlue[2])
-        doc.setFontSize(24)
-        doc.setFont(undefined, "bold")
-        doc.text("PAYSLIP", 105, 55, { align: "center" })
+      doc.setFillColor(teal[0], teal[1], teal[2])
+      doc.rect(14, 105, 182, 8, "F")
+      doc.setTextColor(255, 255, 255)
+      doc.text("Pay Period", 16, 111)
+      doc.setTextColor(0, 0, 0)
+      doc.text(`${formatDate(timesheet.weekStart)} - ${formatDate(timesheet.weekEnd)}`, 16, 122)
 
-        // Employee Information section with teal header
-        doc.setFillColor(teal[0], teal[1], teal[2])
-        doc.rect(14, 65, 182, 8, "F")
-        doc.setTextColor(255, 255, 255)
-        doc.setFontSize(12)
-        doc.text("Employee Information", 16, 71)
+      doc.setFillColor(teal[0], teal[1], teal[2])
+      doc.rect(14, 135, 182, 8, "F")
+      doc.setTextColor(255, 255, 255)
+      doc.text("Earnings", 16, 141)
 
-        doc.setTextColor(0, 0, 0)
-        doc.setFontSize(10)
-        doc.setFont(undefined, "normal")
-        doc.text(`Name: ${employee.name}`, 16, 82)
-        doc.text(`Role: ${employee.role}`, 16, 89)
-        doc.text(`Local Rate: €${employee.hourlyRate}/hr | Dublin Rate: €${employee.dublinRate}/hr`, 16, 96)
+      doc.setFillColor(navyBlue[0], navyBlue[1], navyBlue[2])
+      doc.rect(14, 150, 182, 8, "F")
+      doc.setTextColor(255, 255, 255)
+      doc.text("Description", 16, 156)
+      doc.text("Hours", 100, 156)
+      doc.text("Rate", 130, 156)
+      doc.text("Amount", 160, 156)
 
-        // Pay Period section with teal header
-        doc.setFillColor(teal[0], teal[1], teal[2])
-        doc.rect(14, 105, 182, 8, "F")
-        doc.setTextColor(255, 255, 255)
-        doc.setFontSize(12)
-        doc.text("Pay Period", 16, 111)
+      doc.setTextColor(0, 0, 0)
+      doc.text("Regular Hours", 16, 168)
+      doc.text(timesheet.totalHours.toFixed(1), 100, 168)
+      doc.text(`€${employee.hourlyRate}`, 130, 168)
+      doc.text(`€${timesheet.totalCost.toFixed(2)}`, 160, 168)
 
-        doc.setTextColor(0, 0, 0)
-        doc.setFontSize(10)
-        doc.text(`${formatDate(timesheet.weekStart)} - ${formatDate(timesheet.weekEnd)}`, 16, 122)
+      doc.setFillColor(gold[0], gold[1], gold[2])
+      doc.rect(14, 180, 182, 12, "F")
+      doc.setTextColor(navyBlue[0], navyBlue[1], navyBlue[2])
+      doc.setFontSize(14)
+      doc.setFont(undefined, "bold")
+      doc.text("Total Payment:", 16, 188)
+      doc.setFontSize(16)
+      doc.text(`€${timesheet.totalCost.toFixed(2)}`, 160, 188)
 
-        // Earnings section with teal header
-        doc.setFillColor(teal[0], teal[1], teal[2])
-        doc.rect(14, 135, 182, 8, "F")
-        doc.setTextColor(255, 255, 255)
-        doc.setFontSize(12)
-        doc.text("Earnings", 16, 141)
+      doc.setTextColor(100, 100, 100)
+      doc.setFontSize(8)
+      doc.text(`Generated on ${new Date().toLocaleDateString()}`, 105, 280, { align: "center" })
 
-        // Table header with navy background
-        doc.setFillColor(navyBlue[0], navyBlue[1], navyBlue[2])
-        doc.rect(14, 150, 182, 8, "F")
-        doc.setTextColor(255, 255, 255)
-        doc.setFontSize(10)
-        doc.text("Description", 16, 156)
-        doc.text("Hours", 100, 156)
-        doc.text("Rate", 130, 156)
-        doc.text("Amount", 160, 156)
-
-        // Table content
-        doc.setTextColor(0, 0, 0)
-        doc.text("Regular Hours", 16, 168)
-        doc.text(timesheet.totalHours.toFixed(1), 100, 168)
-        doc.text(`€${employee.hourlyRate}`, 130, 168)
-        doc.text(`€${timesheet.totalCost.toFixed(2)}`, 160, 168)
-
-        doc.line(14, 173, 196, 173)
-
-        // Total with gold highlight
-        doc.setFillColor(gold[0], gold[1], gold[2])
-        doc.rect(14, 180, 182, 12, "F")
-        doc.setTextColor(navyBlue[0], navyBlue[1], navyBlue[2])
-        doc.setFontSize(14)
-        doc.setFont(undefined, "bold")
-        doc.text("Total Payment:", 16, 188)
-        doc.setFontSize(16)
-        doc.text(`€${timesheet.totalCost.toFixed(2)}`, 160, 188)
-
-        // Footer
-        doc.setTextColor(100, 100, 100)
-        doc.setFontSize(8)
-        doc.setFont(undefined, "normal")
-        doc.text(`Generated on ${new Date().toLocaleDateString()}`, 105, 280, { align: "center" })
-
-        doc.save(`${employee.name}_Payslip_${timesheet.weekStart}.pdf`)
-      }
-
-      img.onerror = () => {
-        // Fallback if logo fails to load
-        console.error("[v0] Failed to load logo, generating payslip without it")
-
-        const navyBlue = [26, 58, 82]
-        const teal = [107, 196, 201]
-        const gold = [253, 185, 19]
-
-        doc.setTextColor(navyBlue[0], navyBlue[1], navyBlue[2])
-        doc.setFontSize(18)
-        doc.setFont(undefined, "bold")
-        doc.text("BRACKVALE", 105, 20, { align: "center" })
-        doc.setFontSize(24)
-        doc.text("PAYSLIP", 105, 35, { align: "center" })
-
-        doc.setFillColor(teal[0], teal[1], teal[2])
-        doc.rect(14, 45, 182, 8, "F")
-        doc.setTextColor(255, 255, 255)
-        doc.setFontSize(12)
-        doc.text("Employee Information", 16, 51)
-
-        doc.setTextColor(0, 0, 0)
-        doc.setFontSize(10)
-        doc.setFont(undefined, "normal")
-        doc.text(`Name: ${employee.name}`, 16, 62)
-        doc.text(`Role: ${employee.role}`, 16, 69)
-        doc.text(`Local Rate: €${employee.hourlyRate}/hr | Dublin Rate: €${employee.dublinRate}/hr`, 16, 76)
-
-        doc.setFillColor(teal[0], teal[1], teal[2])
-        doc.rect(14, 85, 182, 8, "F")
-        doc.setTextColor(255, 255, 255)
-        doc.setFontSize(12)
-        doc.text("Pay Period", 16, 91)
-
-        doc.setTextColor(0, 0, 0)
-        doc.setFontSize(10)
-        doc.text(`${formatDate(timesheet.weekStart)} - ${formatDate(timesheet.weekEnd)}`, 16, 102)
-
-        doc.setFillColor(teal[0], teal[1], teal[2])
-        doc.rect(14, 115, 182, 8, "F")
-        doc.setTextColor(255, 255, 255)
-        doc.setFontSize(12)
-        doc.text("Earnings", 16, 121)
-
-        doc.setFillColor(navyBlue[0], navyBlue[1], navyBlue[2])
-        doc.rect(14, 130, 182, 8, "F")
-        doc.setTextColor(255, 255, 255)
-        doc.setFontSize(10)
-        doc.text("Description", 16, 136)
-        doc.text("Hours", 100, 136)
-        doc.text("Rate", 130, 136)
-        doc.text("Amount", 160, 136)
-
-        doc.setTextColor(0, 0, 0)
-        doc.text("Regular Hours", 16, 148)
-        doc.text(timesheet.totalHours.toFixed(1), 100, 148)
-        doc.text(`€${employee.hourlyRate}`, 130, 148)
-        doc.text(`€${timesheet.totalCost.toFixed(2)}`, 160, 148)
-
-        doc.line(14, 153, 196, 153)
-
-        doc.setFillColor(gold[0], gold[1], gold[2])
-        doc.rect(14, 160, 182, 12, "F")
-        doc.setTextColor(navyBlue[0], navyBlue[1], navyBlue[2])
-        doc.setFontSize(14)
-        doc.setFont(undefined, "bold")
-        doc.text("Total Payment:", 16, 168)
-        doc.setFontSize(16)
-        doc.text(`€${timesheet.totalCost.toFixed(2)}`, 160, 168)
-
-        doc.setTextColor(100, 100, 100)
-        doc.setFontSize(8)
-        doc.setFont(undefined, "normal")
-        doc.text(`Generated on ${new Date().toLocaleDateString()}`, 105, 280, { align: "center" })
-
-        doc.save(`${employee.name}_Payslip_${timesheet.weekStart}.pdf`)
-      }
+      doc.save(`${employee.name}_Payslip_${timesheet.weekStart}.pdf`)
     })
   }
 
+  /* ----------  RENDER  ---------- */
   const selectedTimesheet = weeklyTimesheets.find((t) => t.weekStart === selectedWeek)
 
   return (
