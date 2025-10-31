@@ -329,7 +329,8 @@ export function EmployeeDetailClient({ employeeId }: EmployeeDetailClientProps) 
 
       doc.setTextColor(100, 100, 100)
       doc.setFontSize(8)
-      doc.text(`Generated on ${new Date().toLocaleDateString()}`, 105, 280, { align: "center" })
+      const today = new Date().toLocaleDateString?.("en-GB") ?? new Date().toISOString().slice(0, 10)
+doc.text(`Generated on ${today}`, 105, 280, { align: "center" })
 
       doc.save(`${employee.name}_Payslip_${timesheet.weekStart}.pdf`)
     })
