@@ -9,6 +9,7 @@ import Link from "next/link"
 import type { Employee, Project, TimeEntry } from "@/app/page"
 import { formatDate } from "@/lib/utils"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+import { startOfWeek, endOfWeek } from "date-fns"
 
 type EmployeeDetailClientProps = {
   employeeId: string
@@ -70,7 +71,7 @@ export function EmployeeDetailClient({ employeeId }: EmployeeDetailClientProps) 
 
   useEffect(() => {
 const calculateWeeklySummaries = (): WeeklySummary[] => {
-  const summaries: WeeklySummary[] = []
+  const weeklysummaries: WeeklySummary[] = []
   const weekMap = new Map<string, WeeklySummary>()
   timeEntries.forEach(entry => {
     const weekStart = startOfWeek(entry.date)
@@ -93,7 +94,7 @@ const calculateWeeklySummaries = (): WeeklySummary[] => {
 }
   const summaries = calculateWeeklySummaries()
 
-  summaries.forEach(s =>
+  weeklysummaries.forEach(s =>
     supabase.from('weekly_summaries').upsert({
       week_start: s.weekStart,
       week_end:   s.weekEnd,
@@ -109,7 +110,7 @@ const calculateWeeklySummaries = (): WeeklySummary[] => {
       .select('*')
       .eq('employee_id', employeeId)
       .order('week_start', { ascending: false })
-      .then(({ data }) => setSummaries(data ?? []))
+      .then(({ data }) => setWeeklySummaries(data ?? []))
 
     const sub = supabase
       .channel('summaries')
