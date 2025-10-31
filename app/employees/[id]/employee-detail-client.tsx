@@ -44,7 +44,7 @@ export function EmployeeDetailClient({ employeeId }: EmployeeDetailClientProps) 
   const [projects, setProjects] = useState<Project[]>([])
   const [employees, setEmployees] = useState<Employee[]>([])
   const [selectedWeek, setSelectedWeek] = useState<string>("")
-  const [weeklySummaries, setWeeklySummaries] = useState<WeeklySummary[]>([])
+  const [weeklySummaries, setweeklySummaries] = useState<WeeklySummary[]>([])
 
   useEffect(() => {
     const storedEmployees = localStorage.getItem("employees")
@@ -70,8 +70,8 @@ export function EmployeeDetailClient({ employeeId }: EmployeeDetailClientProps) 
   }, [employeeId])
 
   useEffect(() => {
-const calculateWeeklySummaries = (): WeeklySummary[] => {
-  const weeklysummaries: WeeklySummary[] = []
+const calculateweeklySummaries = (): WeeklySummary[] => {
+  const weeklySummaries: WeeklySummary[] = []
   const weekMap = new Map<string, WeeklySummary>()
   timeEntries.forEach(entry => {
     const weekStart = startOfWeek(entry.date)
@@ -92,9 +92,9 @@ const calculateWeeklySummaries = (): WeeklySummary[] => {
   })
   return Array.from(weekMap.values())
 }
-  const summaries = calculateWeeklySummaries()
+  const summaries = calculateweeklySummaries()
 
-  weeklysummaries.forEach(s =>
+  weeklySummaries.forEach(s =>
     supabase.from('weekly_summaries').upsert({
       week_start: s.weekStart,
       week_end:   s.weekEnd,
@@ -110,7 +110,7 @@ const calculateWeeklySummaries = (): WeeklySummary[] => {
       .select('*')
       .eq('employee_id', employeeId)
       .order('week_start', { ascending: false })
-      .then(({ data }) => setWeeklySummaries(data ?? []))
+      .then(({ data }) => setweeklySummaries(data ?? []))
 
     const sub = supabase
       .channel('summaries')
