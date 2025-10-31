@@ -44,7 +44,7 @@ export function EmployeeDetailClient({ employeeId }: EmployeeDetailClientProps) 
   const [projects, setProjects] = useState<Project[]>([])
   const [employees, setEmployees] = useState<Employee[]>([])
   const [selectedWeek, setSelectedWeek] = useState<string>("")
-  const [weeklySummaries, setweeklySummaries] = useState<WeeklySummary[]>([])
+  const [weeklySummaries, setWeeklySummaries] = useState<WeeklySummary[]>([])
 
   useEffect(() => {
     const storedEmployees = localStorage.getItem("employees")
@@ -70,7 +70,7 @@ export function EmployeeDetailClient({ employeeId }: EmployeeDetailClientProps) 
   }, [employeeId])
 
   useEffect(() => {
-const calculateweeklySummaries = (): WeeklySummary[] => {
+const calculateWeeklySummaries = (): WeeklySummary[] => {
   const weeklySummaries: WeeklySummary[] = []
   const weekMap = new Map<string, WeeklySummary>()
   timeEntries.forEach(entry => {
@@ -110,12 +110,18 @@ const calculateweeklySummaries = (): WeeklySummary[] => {
       .select('*')
       .eq('employee_id', employeeId)
       .order('week_start', { ascending: false })
-      .then(({ data }) => setweeklySummaries(data ?? []))
+      .then(({ data }) => setWeeklySummaries(data ?? []))
 
     const sub = supabase
       .channel('summaries')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'weekly_summaries' }, payload => {
-      })
+  if (payload.eventType === 'INSERT')
+    setWeeklySummaries(prev => [payload.new as WeeklySummary, ...prev])
+  if (payload.eventType === 'DELETE')
+    setWeeklySummaries(prev => prev.filter(r => r.id !== payload.old.id))
+  if (payload.eventType === 'UPDATE')
+    setWeeklySummaries(prev => prev.map(r => r.id === payload.new.id ? payload.new as WeeklySummary : r))
+})
       .subscribe()
 
     return () => supabase.removeChannel(sub)
