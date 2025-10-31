@@ -92,7 +92,7 @@ const calculateweeklySummaries = (): WeeklySummary[] => {
   })
   return Array.from(weekMap.values())
 }
-  const summaries = calculateweeklySummaries()
+  const summaries = calculateWeeklySummaries()
 
   weeklySummaries.forEach(s =>
     supabase.from('weekly_summaries').upsert({
